@@ -1,5 +1,8 @@
 import os
 
+BUY_SIDE = 'B'
+SELL_SIDE = 'S'
+
 
 class Logger:
     def __init__(self, log_path='output.log'):
@@ -8,9 +11,12 @@ class Logger:
         with open(self.log_path, "w"):
             pass
 
-    def print_log(self, sequence_no, symbol, order_book_bid, order_book_ask, order_book_depth):
-        order_book_bid = order_book_bid[:, :order_book_depth]
-        order_book_ask = order_book_ask[:, :order_book_depth]
+    def print_log(self, sequence_no, symbol, order_book, order_book_depth):
+        key_bid = order_book.get_key(symbol, BUY_SIDE)
+        key_ask = order_book.get_key(symbol, SELL_SIDE)
+        order_book_bid = order_book.get(key_bid)[:, :order_book_depth]
+        order_book_ask = order_book.get(key_ask)[:, :order_book_depth]
+
         log = open(self.log_path, "a")
         log.write(f"{sequence_no}, "
                   f"{symbol}, "

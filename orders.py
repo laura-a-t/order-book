@@ -21,3 +21,7 @@ class Orders:
             self.insert(key, order)
         else:
             self.delete(key)
+
+    @staticmethod
+    def get_key(order_id, side):
+        return f"{order_id}_{side}"
