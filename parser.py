@@ -24,7 +24,8 @@ def parse_messages(path, order_book_depth):
         if not sequence_no_bytes:
             break
         sequence_no = int.from_bytes(sequence_no_bytes, LITTLE_ENDIAN)
-        # message_size
+        # The message size does not seem to be necessary except for asserting the message size is as expected per type
+        # of message
         file.read(4)
         message_type = file.read(1).decode(UTF_8_ENCODING)
         if message_type == MESSAGE_TYPE_ADDED:
@@ -39,6 +40,7 @@ def parse_messages(path, order_book_depth):
             raise Exception("Incorrect message type and message size combination")
         if level_updated < order_book_depth:
             _log_changes(log, sequence_no, symbol, order_book_depth)
+    file.close()
     log.close()
 
 
@@ -67,45 +69,45 @@ def _to_str(l):
 def _process_order_executed(file):
     message = _extract_message_executed(file)
 
-    orders_key = _get_orders_key(message[1], message[2])
-    price = get_order_from_list(orders_key)[4]
+    orders_key = _get_orders_key(message["order_id"], message["side"])
+    price = get_order_from_list(orders_key)["price"]
     update_executed_order_in_list(orders_key, message)
 
-    level_updated = update_order_book(message[0], message[2], -message[3], price)
-    return message[0], level_updated
+    level_updated = update_order_book(message["symbol"], message["side"], -message["size"], price)
+    return message["symbol"], level_updated
 
 
 def _process_order_deleted(file):
     message = _extract_message_deleted(file)
 
-    orders_key = _get_orders_key(message[1], message[2])
+    orders_key = _get_orders_key(message["order_id"], message["side"])
     order = get_order_from_list(orders_key)
     delete_order_from_list(orders_key)
 
-    level_updated = update_order_book(message[0], message[2], -order[3], order[4])
-    return message[0], level_updated
+    level_updated = update_order_book(message["symbol"], message["side"], -order["size"], order["price"])
+    return message["symbol"], level_updated
 
 
 def _process_order_updated(file):
     message = _extract_message_added_or_updated(file)
 
-    orders_key = _get_orders_key(message[1], message[2])
+    orders_key = _get_orders_key(message["order_id"], message["side"])
     prev_order = get_order_from_list(orders_key)
     insert_update_order_in_list(orders_key, message)
 
-    level_updated1 = update_order_book(prev_order[0], prev_order[2], -prev_order[3], prev_order[4])
-    level_updated2 = update_order_book(message[0], message[2], message[3], message[4])
-    return message[0], min(level_updated1, level_updated2)
+    level_updated1 = update_order_book(prev_order["symbol"], prev_order["side"], -prev_order["size"], prev_order["price"])
+    level_updated2 = update_order_book(message["symbol"], message["side"], message["size"], message["price"])
+    return message["symbol"], min(level_updated1, level_updated2)
 
 
 def _process_order_added(file):
     message = _extract_message_added_or_updated(file)
 
-    orders_key = _get_orders_key(message[1], message[2])
+    orders_key = _get_orders_key(message["order_id"], message["side"])
     insert_update_order_in_list(orders_key, message)
 
-    level_updated = update_order_book(message[0], message[2], message[3], message[4])
-    return message[0], level_updated
+    level_updated = update_order_book(message["symbol"], message["side"], message["size"], message["price"])
+    return message["symbol"], level_updated
 
 
 def insert_update_order_in_list(key, message):
@@ -122,10 +124,10 @@ def delete_order_from_list(key):
 
 def update_executed_order_in_list(key, message):
     order = get_order_from_list(key)
-    new_size = order[3] - message[3]
+    new_size = order["size"] - message["size"]
     if new_size:
-        updated_order = order[0], order[1], order[2], new_size, order[4]
-        insert_update_order_in_list(key, updated_order)
+        order['size'] = new_size
+        insert_update_order_in_list(key, order)
     else:
         delete_order_from_list(key)
 
@@ -185,7 +187,13 @@ def _extract_message_added_or_updated(file):
     size = _extract_size(file)
     price = _extract_price(file)
     file.read(4)
-    return symbol, order_id, side, size, price
+    return {
+        "symbol": symbol,
+        "order_id": order_id,
+        "side": side,
+        "size": size,
+        "price": price,
+    }
 
 
 def _extract_message_deleted(file):
@@ -193,7 +201,11 @@ def _extract_message_deleted(file):
     order_id = _extract_order_id(file)
     side = _extract_side(file)
     file.read(3)
-    return symbol, order_id, side
+    return {
+        "symbol": symbol,
+        "order_id": order_id,
+        "side": side,
+    }
 
 
 def _extract_message_executed(file):
@@ -202,7 +214,12 @@ def _extract_message_executed(file):
     side = _extract_side(file)
     file.read(3)
     traded_qty = _extract_size(file)
-    return symbol, order_id, side, traded_qty
+    return {
+        "symbol": symbol,
+        "order_id": order_id,
+        "side": side,
+        "size": traded_qty,
+    }
 
 
 def _extract_symbol(file):
@@ -226,6 +243,6 @@ def _extract_price(file):
 
 
 t1 = time.time()
-parse_messages('input1.stream', 2)
+parse_messages('input2.stream', 10)
 t2 = time.time()
 print(f"Execution took {t2 - t1} seconds")
