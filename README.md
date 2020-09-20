@@ -1,2 +1,0 @@
-# vivcourt
-vivcourt assignment
