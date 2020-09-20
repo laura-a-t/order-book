@@ -1,7 +1,8 @@
 import time
-import os
 
 import numpy as np
+
+from logger import Logger
 
 LITTLE_ENDIAN = 'little'
 MESSAGE_TYPE_ADDED = "A"
@@ -17,7 +18,7 @@ orders = {}
 
 
 def parse_messages(path, order_book_depth):
-    log = open('output.log', "w")
+    logger = Logger()
     file = open(path, "rb")
     while True:
         sequence_no_bytes = file.read(4)
@@ -38,32 +39,18 @@ def parse_messages(path, order_book_depth):
             symbol, level_updated = _process_order_executed(file)
         else:
             raise Exception("Incorrect message type and message size combination")
-        if level_updated < order_book_depth:
-            _log_changes(log, sequence_no, symbol, order_book_depth)
+
+        print_update(logger, sequence_no, symbol, level_updated, order_book_depth)
     file.close()
-    log.close()
 
 
-def _log_changes(log, sequence_no, symbol, order_book_depth):
-    key_bid = _get_order_book_key(symbol, BUY_SIDE)
-    key_ask = _get_order_book_key(symbol, SELL_SIDE)
-    order_book_bid = order_book.get(key_bid, np.array([[]]))[:, :order_book_depth]
-    order_book_ask = order_book.get(key_ask, np.array([[]]))[:, :order_book_depth]
-    log.write(f"{sequence_no}, "
-              f"{symbol}, "
-              f"{_format_levels_for_printing(order_book_bid)}, "
-              f"{_format_levels_for_printing(order_book_ask)}"
-              f"{os.linesep}")
-
-
-def _format_levels_for_printing(levels):
-    if levels.size == 0:
-        return '[]'
-    return "[" + ', '.join(_to_str(levels[:, i]) for i in range(levels.shape[1])) + "]"
-
-
-def _to_str(l):
-    return "(" + ', '.join(str(i) for i in l) + ")"
+def print_update(logger, sequence_no, symbol, level_updated, order_book_depth):
+    if level_updated < order_book_depth:
+        key_bid = _get_order_book_key(symbol, BUY_SIDE)
+        key_ask = _get_order_book_key(symbol, SELL_SIDE)
+        order_book_bid = order_book.get(key_bid, np.array([[]]))
+        order_book_ask = order_book.get(key_ask, np.array([[]]))
+        logger.print_log(sequence_no, symbol, order_book_bid, order_book_ask, order_book_depth)
 
 
 def _process_order_executed(file):
