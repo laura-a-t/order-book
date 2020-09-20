@@ -38,22 +38,24 @@ def parse_messages(path, order_book_depth):
         else:
             raise Exception("Incorrect message type and message size combination")
         if level_updated < order_book_depth:
-            _log_changes(log, sequence_no, symbol)
+            _log_changes(log, sequence_no, symbol, order_book_depth)
     log.close()
 
 
-def _log_changes(log, sequence_no, symbol):
+def _log_changes(log, sequence_no, symbol, order_book_depth):
     key_bid = _get_order_book_key(symbol, BUY_SIDE)
     key_ask = _get_order_book_key(symbol, SELL_SIDE)
+    order_book_bid = order_book.get(key_bid, np.array([[]]))[:, :order_book_depth]
+    order_book_ask = order_book.get(key_ask, np.array([[]]))[:, :order_book_depth]
     log.write(f"{sequence_no}, "
               f"{symbol}, "
-              f"{_format_levels_for_printing(order_book.get(key_bid))}, "
-              f"{_format_levels_for_printing(order_book.get(key_ask))}"
+              f"{_format_levels_for_printing(order_book_bid)}, "
+              f"{_format_levels_for_printing(order_book_ask)}"
               f"{os.linesep}")
 
 
 def _format_levels_for_printing(levels):
-    if levels is None:
+    if levels.size == 0:
         return '[]'
     return "[" + ', '.join(_to_str(levels[:, i]) for i in range(levels.shape[1])) + "]"
 
@@ -224,6 +226,6 @@ def _extract_price(file):
 
 
 t1 = time.time()
-parse_messages('input2.stream', 5)
+parse_messages('input1.stream', 2)
 t2 = time.time()
 print(f"Execution took {t2 - t1} seconds")
