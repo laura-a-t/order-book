@@ -3,6 +3,7 @@ import time
 import numpy as np
 
 from logger import Logger
+from orders import Orders
 
 LITTLE_ENDIAN = 'little'
 MESSAGE_TYPE_ADDED = "A"
@@ -14,7 +15,7 @@ BUY_SIDE = 'B'
 SELL_SIDE = 'S'
 
 order_book = {}
-orders = {}
+orders = Orders()
 
 
 def parse_messages(path, order_book_depth):
@@ -25,6 +26,7 @@ def parse_messages(path, order_book_depth):
         if not sequence_no_bytes:
             break
         sequence_no = int.from_bytes(sequence_no_bytes, LITTLE_ENDIAN)
+
         # The message size does not seem to be necessary except for asserting the message size is as expected per type
         # of message
         file.read(4)
@@ -57,8 +59,8 @@ def _process_order_executed(file):
     message = _extract_message_executed(file)
 
     orders_key = _get_orders_key(message["order_id"], message["side"])
-    price = get_order_from_list(orders_key)["price"]
-    update_executed_order_in_list(orders_key, message)
+    price = orders.get(orders_key)["price"]
+    orders.reduce_order_size(orders_key, message["size"])
 
     level_updated = update_order_book(message["symbol"], message["side"], -message["size"], price)
     return message["symbol"], level_updated
@@ -68,8 +70,8 @@ def _process_order_deleted(file):
     message = _extract_message_deleted(file)
 
     orders_key = _get_orders_key(message["order_id"], message["side"])
-    order = get_order_from_list(orders_key)
-    delete_order_from_list(orders_key)
+    order = orders.get(orders_key)
+    orders.delete(orders_key)
 
     level_updated = update_order_book(message["symbol"], message["side"], -order["size"], order["price"])
     return message["symbol"], level_updated
@@ -79,8 +81,8 @@ def _process_order_updated(file):
     message = _extract_message_added_or_updated(file)
 
     orders_key = _get_orders_key(message["order_id"], message["side"])
-    prev_order = get_order_from_list(orders_key)
-    insert_update_order_in_list(orders_key, message)
+    prev_order = orders.get(orders_key)
+    orders.insert(orders_key, message)
 
     level_updated1 = update_order_book(prev_order["symbol"], prev_order["side"], -prev_order["size"], prev_order["price"])
     level_updated2 = update_order_book(message["symbol"], message["side"], message["size"], message["price"])
@@ -91,32 +93,10 @@ def _process_order_added(file):
     message = _extract_message_added_or_updated(file)
 
     orders_key = _get_orders_key(message["order_id"], message["side"])
-    insert_update_order_in_list(orders_key, message)
+    orders.insert(orders_key, message)
 
     level_updated = update_order_book(message["symbol"], message["side"], message["size"], message["price"])
     return message["symbol"], level_updated
-
-
-def insert_update_order_in_list(key, message):
-    orders[key] = message
-
-
-def get_order_from_list(key):
-    return orders[key]
-
-
-def delete_order_from_list(key):
-    del orders[key]
-
-
-def update_executed_order_in_list(key, message):
-    order = get_order_from_list(key)
-    new_size = order["size"] - message["size"]
-    if new_size:
-        order['size'] = new_size
-        insert_update_order_in_list(key, order)
-    else:
-        delete_order_from_list(key)
 
 
 def update_order_book(symbol, side, size, price):
