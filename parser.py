@@ -1,3 +1,6 @@
+import time
+import os
+
 import numpy as np
 
 LITTLE_ENDIAN = 'little'
@@ -13,7 +16,8 @@ order_book = {}
 orders = {}
 
 
-def parse_messages(path):
+def parse_messages(path, order_book_depth):
+    log = open('output.log', "w")
     file = open(path, "rb")
     while True:
         sequence_no_bytes = file.read(4)
@@ -24,27 +28,33 @@ def parse_messages(path):
         file.read(4)
         message_type = file.read(1).decode(UTF_8_ENCODING)
         if message_type == MESSAGE_TYPE_ADDED:
-            symbol = _process_order_added(file)
+            symbol, level_updated = _process_order_added(file)
         elif message_type == MESSAGE_TYPE_UPDATED:
-            symbol = _process_order_updated(file)
+            symbol, level_updated = _process_order_updated(file)
         elif message_type == MESSAGE_TYPE_DELETED:
-            symbol = _process_order_deleted(file)
+            symbol, level_updated = _process_order_deleted(file)
         elif message_type == MESSAGE_TYPE_EXECUTED:
-            symbol = _process_order_executed(file)
+            symbol, level_updated = _process_order_executed(file)
         else:
             raise Exception("Incorrect message type and message size combination")
-        key_bid = _get_key(symbol, BUY_SIDE)
-        key_ask = _get_key(symbol, SELL_SIDE)
-        print(f"{sequence_no}, "
+        if level_updated < order_book_depth:
+            _log_changes(log, sequence_no, symbol)
+    log.close()
+
+
+def _log_changes(log, sequence_no, symbol):
+    key_bid = _get_order_book_key(symbol, BUY_SIDE)
+    key_ask = _get_order_book_key(symbol, SELL_SIDE)
+    log.write(f"{sequence_no}, "
               f"{symbol}, "
               f"{_format_levels_for_printing(order_book.get(key_bid))}, "
-              f"{_format_levels_for_printing(order_book.get(key_ask))}")
+              f"{_format_levels_for_printing(order_book.get(key_ask))}"
+              f"{os.linesep}")
 
 
 def _format_levels_for_printing(levels):
     if levels is None:
         return '[]'
-    _len = levels.shape[1]
     return "[" + ', '.join(_to_str(levels[:, i]) for i in range(levels.shape[1])) + "]"
 
 
@@ -54,51 +64,91 @@ def _to_str(l):
 
 def _process_order_executed(file):
     message = _extract_message_executed(file)
-    price = orders[message[1]][4]
-    update_executed_order(message)
-    update_order_book(message[0], message[2], -message[3], price)
-    return message[0]
+
+    orders_key = _get_orders_key(message[1], message[2])
+    price = get_order_from_list(orders_key)[4]
+    update_executed_order_in_list(orders_key, message)
+
+    level_updated = update_order_book(message[0], message[2], -message[3], price)
+    return message[0], level_updated
 
 
 def _process_order_deleted(file):
     message = _extract_message_deleted(file)
-    order = orders[message[1]]
-    del orders[message[1]]
-    update_order_book(order[0], order[2], -order[3], order[4])
-    return message[0]
+
+    orders_key = _get_orders_key(message[1], message[2])
+    order = get_order_from_list(orders_key)
+    delete_order_from_list(orders_key)
+
+    level_updated = update_order_book(message[0], message[2], -order[3], order[4])
+    return message[0], level_updated
 
 
 def _process_order_updated(file):
     message = _extract_message_added_or_updated(file)
-    prev_order = orders[message[1]]
-    update_order_book(message[0], message[2], -prev_order[3], prev_order[4])
-    update_order_book(message[0], message[2], message[3], message[4])
-    orders[message[1]] = message
-    return message[0]
+
+    orders_key = _get_orders_key(message[1], message[2])
+    prev_order = get_order_from_list(orders_key)
+    insert_update_order_in_list(orders_key, message)
+
+    level_updated1 = update_order_book(prev_order[0], prev_order[2], -prev_order[3], prev_order[4])
+    level_updated2 = update_order_book(message[0], message[2], message[3], message[4])
+    return message[0], min(level_updated1, level_updated2)
 
 
 def _process_order_added(file):
     message = _extract_message_added_or_updated(file)
-    orders[message[1]] = message
-    update_order_book(message[0], message[2], message[3], message[4])
-    return message[0]
+
+    orders_key = _get_orders_key(message[1], message[2])
+    insert_update_order_in_list(orders_key, message)
+
+    level_updated = update_order_book(message[0], message[2], message[3], message[4])
+    return message[0], level_updated
+
+
+def insert_update_order_in_list(key, message):
+    orders[key] = message
+
+
+def get_order_from_list(key):
+    return orders[key]
+
+
+def delete_order_from_list(key):
+    del orders[key]
+
+
+def update_executed_order_in_list(key, message):
+    order = get_order_from_list(key)
+    new_size = order[3] - message[3]
+    if new_size:
+        updated_order = order[0], order[1], order[2], new_size, order[4]
+        insert_update_order_in_list(key, updated_order)
+    else:
+        delete_order_from_list(key)
 
 
 def update_order_book(symbol, side, size, price):
-    key = _get_key(symbol, side)
+    key = _get_order_book_key(symbol, side)
     if key in order_book:
-        order_book[key] = _insert_order(order_book[key], size, price)
+        order_book[key], index = _insert_order_in_order_book(order_book[key], side, size, price)
     else:
         order_book[key] = np.array([[price], [size]])
+        index = 0
+    return index
 
 
-def _get_key(symbol, side):
+def _get_order_book_key(symbol, side):
     return f"{symbol}_{side}"
 
 
-def _insert_order(levels, size, price):
-    index = np.searchsorted(levels[0], price)
-    if price in levels[0]:
+def _get_orders_key(order_id, side):
+    return f"{order_id}_{side}"
+
+
+def _insert_order_in_order_book(levels, side, size, price):
+    index, level_exists = find_update_index(levels[0], price, ascending=side == SELL_SIDE)
+    if level_exists:
         new_size = levels[1, index] + size
         if new_size:
             levels[1, index] = new_size
@@ -106,16 +156,23 @@ def _insert_order(levels, size, price):
             levels = np.delete(levels, index, 1)
     else:
         levels = np.insert(levels, index, (price, size), axis=1)
-    return levels
+    return levels, index
 
 
-def update_executed_order(executed):
-    order = orders[executed[1]]
-    new_size = order[3] - executed[3]
-    if new_size:
-        orders[executed[1]] = order[0], order[1], order[2], new_size, order[4]
-    else:
-        del orders[executed[1]]
+def find_update_index(arr, value, ascending=True):
+    low = 0
+    high = len(arr)
+    while low < high:
+        mid = (low + high) // 2
+        if arr[mid] == value:
+            return mid, True
+        if arr[mid] > value and ascending:
+            high = mid
+        elif arr[mid] < value and not ascending:
+            high = mid
+        else:
+            low = mid + 1
+    return low if ascending else high, False
 
 
 def _extract_message_added_or_updated(file):
@@ -166,4 +223,7 @@ def _extract_price(file):
     return int.from_bytes(file.read(4), LITTLE_ENDIAN, signed=True)
 
 
-parse_messages('input1.stream')
+t1 = time.time()
+parse_messages('input2.stream', 5)
+t2 = time.time()
+print(f"Execution took {t2 - t1} seconds")
